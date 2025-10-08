@@ -41,7 +41,6 @@ def search_cards(fragment):
     return ret
 
 if not draft_data.get('current-round'):
-    print('init1')
     draft_data.set('current-round', 1)
     draft_data.set('has-started', False)
     draft_data.set('has-finished', False)
@@ -51,15 +50,11 @@ if not draft_data.get('current-round'):
     draft_data.set('pick-order', [])
     draft_data.save()
 
-    print('init2')
-
     with open('card-list.txt', 'r') as f:
         for card_name in f.read().splitlines():
             card_id = card_name.lower()
-            print(card_id)
             card_data.set(card_id, {'id': card_id, 'name': card_name, 'taken': False})
 
-    print(card_data)
     card_data.save()
 
 intents = discord.Intents.default()
