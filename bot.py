@@ -9,25 +9,42 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from pickledb import PickleDB
 
+SEARCH_MAX_LENGTH = 5
+WANTLIST_MAX_LENGTH = 20
+DRAFT_ROUNDS = 42
+
 load_dotenv()
 
 card_data = PickleDB('cards.db')
 main_data = PickleDB('main.db')
 user_data = PickleDB('users.db')
 
-# currently, cardID is lowercase version of the card name
+# cardID is lowercase version of the card name
 def get_card(cardID):
-    return card_data.get(cardID)
+    return card_data.get(cardID.lower())
 
 # userID is provided by discord and coerced to string by pickleDB
 def get_user(userID):
     return user_data.get(userID)
 
+def search_cards(fragment):
+    fragment = fragment.lower()
+
+    ret = []
+    for cardID in card_data.all():
+        if fragment in cardID:
+            ret.append(get_card(cardID))
+
+        if len(ret) >= SEARCH_MAX_LENGTH:
+            break
+
+    return ret
+
 if not main_data.get('draftRound'):
     main_data.set('draftStarted', False)
     main_data.set('draftFinished', False)
     main_data.set('draftRound', 1)
-    main_data.set('numberOfDraftRounds', 11)
+    main_data.set('numberOfDraftRounds', DRAFT_ROUNDS)
     main_data.set('draftCurrentPosition', None)
     main_data.set('draftGoingForwards', True)
     main_data.set('draftOrder', [])
@@ -35,7 +52,8 @@ if not main_data.get('draftRound'):
 
     with open('cardList.txt', 'r') as f:
         for cardName in f.read().splitlines():
-            card_data.set(cardName.lower(), {'name': cardName, 'taken': False})
+            cardID = cardName.lower()
+            card_data.set(cardID, {'id': cardID, 'name': cardName, 'taken': False})
     card_data.save()
 
 intents = discord.Intents.default()
@@ -113,12 +131,82 @@ async def start_draft(ctx):
     # get a random ordering of users
     draftOrder = list(user_data.all())
     random.shuffle(draftOrder)
-    
-    draftOrderString = list(map(lambda userID: get_user(userID)['discord_name'], draftOrder))
+
+    draftOrderString = ', '.join(map(lambda userID:get_user(userID)['discord_name'], draftOrder))
 
     main_data.set('draftOrder', draftOrder)
     main_data.save()
 
     await ctx.send(f'The draft has been started!\nThe draft order is: {draftOrderString}')
+
+@bot.command()
+async def draft(ctx, *, args):
+    user = get_user(ctx.author.id)
+    card = get_card(args)
+
+    if not user:
+        await ctx.send('ERROR: Not registered. Try the !register command')
+        return
+
+    # ensure a clear match before proceeding
+    #   either an exact string match (in which case card is already populated)
+    #   or use the card from search if there is exactly 1 match
+    if not card:
+        card_list = search_cards(args)
+
+        if len(card_list) == 0:
+            await ctx.send('ERROR: No matching cards found. Try !search to resolve')
+            return
+
+        if len(card_list) > 1:
+            card_list_string = ', '.join(map(lambda card:card['name'], card_list))
+            await ctx.send(f'ERROR: Multiple matching cards found. Please be precise\nMatches: {card_list_string}')
+            return
+
+        card = card_list[0]
+
+    # if the draft has already finished, this command should be rejected
+    if main_data.get('draftFinished') == True:
+        await ctx.send('ERROR: The draft already finished. If you want to run a new draft, kill the bot and then delete db files.')
+        return
+
+    # block excessive wantlist for efficiency purposes
+    if len(user['wantedCards']) >= WANTLIST_MAX_LENGTH:
+        await ctx.send('ERROR: Your draft list is too long. Please remove some cards before trying to draft more. !clear to wipe list')
+        return
+
+    # cannot want a card that has already been taken
+    if card['taken']:
+        await ctx.send('ERROR: Card already taken')
+        return
+
+    user['wantedCards'].append(card['id'])
+    user_data.save()
+
+    wantedCardsString = ', '.join(map(lambda cardID:get_card(cardID)['name'], user['wantedCards']))
+
+    await ctx.send(f'Draftlist Updated: {wantedCardsString}')
+
+@bot.command()
+async def clear(ctx):
+    user = get_user(ctx.author.id)
+
+    if not user:
+        await ctx.send('ERROR: Not registered. Try the !register command')
+        return
+
+    user['wantedCards'] = []
+    user_data.save()
+
+    await ctx.send('Draftlist Wiped')
+
+@bot.command()
+async def search(ctx, *, args):
+    card_list = search_cards(args)
+
+    if len(card_list):
+        await ctx.send(', '.join(map(lambda card:card['name'], card_list)))
+    else:
+        await ctx.send(f'No cards found matching {args}')
 
 bot.run(os.getenv('TOKEN'))
