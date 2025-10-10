@@ -19,6 +19,11 @@ card_data  = PickleDB('cards.db')
 user_data  = PickleDB('users.db')
 draft_data = PickleDB('draft.db')
 
+def save_all():
+    card_data.save()
+    user_data.save()
+    draft_data.save()
+
 # card_data is indexed by lowercase version of card name
 def get_card(card_id):
     return card_data.get(card_id.lower())
@@ -210,6 +215,56 @@ async def search(ctx, *, args):
 @tasks.loop(seconds=5)
 async def attempt_draft():
     print('Attempting to perform draft')
+
+    if draft_data.get('has-finished'):
+        print('Draft is over')
+        return
+
+    if not draft_data.get('has-started'):
+        print('Draft has not started')
+        return
+
+    current_drafter = get_user(draft_data.get('pick-order')[draft_data.get('current-position')])
+    want_list = current_drafter['wanted-cards']
+
+    if len(want_list) == 0:
+        return
+
+    card_to_draft = get_card(want_list[0])
+    assert card_to_draft['taken'] == False, 'Already taken card appears in want-list'
+
+    # remove the card to draft from all want lists
+    for user_id in user_data.all():
+        user = get_user(user_id)
+        user['wanted-cards'] = list(filter(lambda card_id:card_id != card_to_draft['id'], user['wanted-cards']))
+
+        # snipe notifications go here if desired
+
+    card_to_draft['taken'] = True
+    current_drafter['drafted-cards'].append(card_to_draft['id'])
+
+    player_count = len(draft_data.get('pick-order'))
+    current_round = draft_data.get('current-round')
+    snaking_forwards = draft_data.get('snaking-forwards')
+    current_position = draft_data.get('current-position')
+
+    # TODO this could be simplified, think like a computer
+    if snaking_forwards:
+        # draft moving forward, not on last pick
+        if current_position < player_count - 1:
+            draft_data.set('current-position', current_position + 1)
+        else: # draft moving forward, is on last pick
+            draft_data.set('snaking-forwards', False)
+            draft_data.set('current-round', current_round + 1)
+    else:
+        # draft moving backwards, not on first pick
+        if current_position > 0:
+            draft_data.set('current-position', current_position - 1)
+        else: # draft moving backwards, is on first pick
+            draft_data.set('snaking-forwards', True)
+            draft_data.set('current-round', current_round + 1)
+
+    print(f"{current_drafter['team-name']} has drafted {card_to_draft['name']}")
 
 @bot.event
 async def on_ready():
