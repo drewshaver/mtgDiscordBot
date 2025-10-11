@@ -7,6 +7,7 @@ import random
 from datetime import datetime
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
+from math import floor
 from pickledb import PickleDB
 
 SEARCH_MAX_LENGTH = 5
@@ -18,6 +19,21 @@ load_dotenv()
 card_data  = PickleDB('cards.db')
 user_data  = PickleDB('users.db')
 draft_data = PickleDB('draft.db')
+
+# initialize db on fresh start
+if not draft_data.get('number-of-rounds'):
+    draft_data.set('number-of-rounds', DRAFT_ROUNDS)
+    draft_data.set('has-started', False)
+    draft_data.set('pick-number', 0)
+    draft_data.set('pick-order', [])
+    draft_data.save()
+
+    with open('card-list.txt', 'r') as f:
+        for card_name in f.read().splitlines():
+            card_id = card_name.lower()
+            card_data.set(card_id, {'id': card_id, 'name': card_name, 'taken': False})
+
+    card_data.save()
 
 def save_all():
     card_data.save()
@@ -45,22 +61,31 @@ def search_cards(fragment):
 
     return ret
 
-if not draft_data.get('current-round'):
-    draft_data.set('current-round', 1)
-    draft_data.set('has-started', False)
-    draft_data.set('has-finished', False)
-    draft_data.set('number-of-rounds', DRAFT_ROUNDS)
-    draft_data.set('current-position', None)
-    draft_data.set('snaking-forwards', True)
-    draft_data.set('pick-order', [])
-    draft_data.save()
+def get_player_count():
+    return len(draft_data.get('pick-order'))
 
-    with open('card-list.txt', 'r') as f:
-        for card_name in f.read().splitlines():
-            card_id = card_name.lower()
-            card_data.set(card_id, {'id': card_id, 'name': card_name, 'taken': False})
+def get_pick_number():
+    return draft_data.get('pick-number')
 
-    card_data.save()
+def get_current_round():
+    if get_player_count() == 0:
+        return 0
+
+    return floor(get_pick_number() / get_player_count())
+
+def get_has_finished():
+    return get_current_round() >= draft_data.get('number-of-rounds')
+
+def get_current_index():
+    player_count = get_player_count()
+    pick_number_in_round = get_pick_number() % player_count
+
+    # snaking forwards
+    if get_current_round() % 2 == 0:
+        return pick_number_in_round
+
+    #snaking backwards
+    return player_count - 1 - pick_number_in_round
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -118,7 +143,7 @@ async def register(ctx, *, args):
 @bot.command()
 async def start_draft(ctx):
     # if the draft has already finished, this command should be rejected
-    if draft_data.get('has-finished') == True:
+    if get_has_finished() == True:
         await ctx.send('ERROR: The draft already finished. If you want to run a new draft, kill the bot and then delete db files.')
         return
 
@@ -128,7 +153,6 @@ async def start_draft(ctx):
         return
 
     draft_data.set('has-started', True)
-    draft_data.set('current-position', 0)
     draft_data.set('time-began', str(datetime.now()))
 
     # get a random ordering of users
@@ -169,7 +193,7 @@ async def draft(ctx, *, args):
         card = card_list[0]
 
     # if the draft has already finished, this command should be rejected
-    if draft_data.get('has-finished') == True:
+    if get_has_finished() == True:
         await ctx.send('ERROR: The draft already finished. If you want to run a new draft, kill the bot and then delete db files.')
         return
 
@@ -216,7 +240,7 @@ async def search(ctx, *, args):
 async def attempt_draft():
     print('Attempting to perform draft')
 
-    if draft_data.get('has-finished'):
+    if get_has_finished():
         print('Draft is over')
         return
 
@@ -224,10 +248,11 @@ async def attempt_draft():
         print('Draft has not started')
         return
 
-    current_drafter = get_user(draft_data.get('pick-order')[draft_data.get('current-position')])
+    current_drafter = get_user(draft_data.get('pick-order')[get_current_index()])
     want_list = current_drafter['wanted-cards']
 
     if len(want_list) == 0:
+        print('Waiting on current drafter')
         return
 
     card_to_draft = get_card(want_list[0])
@@ -243,28 +268,13 @@ async def attempt_draft():
     card_to_draft['taken'] = True
     current_drafter['drafted-cards'].append(card_to_draft['id'])
 
-    player_count = len(draft_data.get('pick-order'))
-    current_round = draft_data.get('current-round')
-    snaking_forwards = draft_data.get('snaking-forwards')
-    current_position = draft_data.get('current-position')
+    info_string = f"Round {get_current_round()+1}, Pick {(get_pick_number() % get_player_count())+1}\n{current_drafter['team-name']} has drafted {card_to_draft['name']}"
 
-    # TODO this could be simplified, think like a computer
-    if snaking_forwards:
-        # draft moving forward, not on last pick
-        if current_position < player_count - 1:
-            draft_data.set('current-position', current_position + 1)
-        else: # draft moving forward, is on last pick
-            draft_data.set('snaking-forwards', False)
-            draft_data.set('current-round', current_round + 1)
-    else:
-        # draft moving backwards, not on first pick
-        if current_position > 0:
-            draft_data.set('current-position', current_position - 1)
-        else: # draft moving backwards, is on first pick
-            draft_data.set('snaking-forwards', True)
-            draft_data.set('current-round', current_round + 1)
+    draft_data.set('pick-number', draft_data.get('pick-number') + 1)
 
-    print(f"{current_drafter['team-name']} has drafted {card_to_draft['name']}")
+    save_all()
+
+    print(info_string)
 
 @bot.event
 async def on_ready():
