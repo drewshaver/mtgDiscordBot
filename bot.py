@@ -89,38 +89,26 @@ def get_current_index():
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(command_prefix='', intents=intents)
 
 @bot.command()
-async def register(ctx, *, args):
+async def register(ctx, *, args=''):
     # check if the user is already registered
     if get_user(ctx.author.id):
         await ctx.send('ERROR: You\'re already registered!')
         return
 
-    if len(args.split()) <= 1:
-        await ctx.send('ERROR: You need to specify a team name and a 3 character abbreviation!\ne.g. register The Pheliadelphia Doggos PHL')
-        return
+    team_name = args
+    if len(team_name) == 0:
+        team_name = ctx.author.name
 
-    # Split team name and abbreviation. First 3 characters of last word is their abbreviation
-    # EG: Los Angeles Lanturns LAL
-    team_abbreviation = args.split()[-1].upper()
-    team_name = ' '.join(args.split()[0:-1])
-    if len(team_abbreviation) > 3:
-        team_abbreviation = team_abbreviation[0:3]
-    if len(team_abbreviation) < 3:
-        await ctx.send('ERROR: Your abbreviation should be 3 characters!')
-        return
-
-    # Reject the user if the team name or abbreviation is already in use
+    # Reject the user if the team name is already in use
     for user_id in user_data.all():
         user = get_user(user_id)
         if team_name == user['team-name']:
-            await ctx.send('ERROR: That team name is already in use! Pick another one, please.')
-            return
-        if team_abbreviation == user['team-abbreviation']:
-            await ctx.send('ERROR: That abbreviation is already in use! Pick another one, please.')
+            await ctx.send('ERROR: That team name is already in use! Please pick another one.')
             return
 
     # registration looks good, so create and store a new user dict
@@ -130,7 +118,6 @@ async def register(ctx, *, args):
         'discord-discriminator': ctx.author.discriminator,
 
         'team-name': team_name,
-        'team-abbreviation': team_abbreviation,
         'drafted-cards': [],
         'wanted-cards': []
     }
@@ -138,7 +125,7 @@ async def register(ctx, *, args):
     user_data.set(ctx.author.id, new_user)
     user_data.save()
 
-    await ctx.send(f'Your team, {team_name} ({team_abbreviation}), has been registered. Congratulations!\nHappy dueling!')
+    await ctx.send(f'Your team, {team_name}, has been registered. Happy dueling!')
 
 @bot.command()
 async def start_draft(ctx):
@@ -155,6 +142,7 @@ async def start_draft(ctx):
     draft_data.set('has-started', True)
     draft_data.set('time-began', str(datetime.now()))
     draft_data.set('main-channel', ctx.channel.id)
+    draft_data.set('current-drafter-notified', False)
 
     # get a random ordering of users
     pick_order = list(user_data.all())
@@ -167,6 +155,8 @@ async def start_draft(ctx):
 
     await ctx.send(f'The draft has been started!\nThe draft order is: {pick_order_string}')
 
+# currently allowing duplicates into the wantlist
+# b/c would like to natively handle multiple copies of cards
 @bot.command()
 async def draft(ctx, *, args):
     user = get_user(ctx.author.id)
@@ -252,8 +242,17 @@ async def attempt_draft():
     current_drafter = get_user(draft_data.get('pick-order')[get_current_index()])
     want_list = current_drafter['wanted-cards']
 
+    pick_string = f"Round {get_current_round()+1}, Pick {(get_pick_number() % get_player_count())+1}"
+
     if len(want_list) == 0:
         print('Waiting on current drafter')
+
+        if not draft_data.get('current-drafter-notified'):
+            draft_data.set('current-drafter-notified', True)
+            draft_data.save()
+
+            bot.loop.create_task(bot.get_user(current_drafter['discord-id']).send(f"It's your turn to draft: {pick_string}"))
+
         return
 
     card_to_draft = get_card(want_list[0])
@@ -269,20 +268,16 @@ async def attempt_draft():
     card_to_draft['taken'] = True
     current_drafter['drafted-cards'].append(card_to_draft['id'])
 
-    info_string = f"Round {get_current_round()+1}, Pick {(get_pick_number() % get_player_count())+1}\n{current_drafter['team-name']} has drafted {card_to_draft['name']}"
+    info_string = f"{pick_string}\n{current_drafter['team-name']} has drafted {card_to_draft['name']}"
 
     draft_data.set('pick-number', draft_data.get('pick-number') + 1)
-
-    save_all()
+    draft_data.set('current-drafter-notified', False)
 
     print(info_string)
 
-    # TODO probably shouldn't be awaiting in this loop
-    # also, do we really need fetch_user and can't use get_user?
-    usr = await bot.fetch_user(current_drafter['discord-id'])
-    await usr.send(info_string)
+    bot.loop.create_task(bot.get_channel(draft_data.get('main-channel')).send(info_string))
 
-    # await bot.get_user(current_drafter['discord-id']).send(info_string)
+    save_all()
 
 @bot.event
 async def on_ready():
