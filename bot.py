@@ -138,7 +138,7 @@ async def register(ctx, *, args):
     user_data.set(ctx.author.id, new_user)
     user_data.save()
 
-    await ctx.send(f'Your team, {team_name} ({team_abbreviation}), has been registered. Congratulations!\nWelcome to secret samp scubing. Happy dueling!')
+    await ctx.send(f'Your team, {team_name} ({team_abbreviation}), has been registered. Congratulations!\nHappy dueling!')
 
 @bot.command()
 async def start_draft(ctx):
@@ -154,6 +154,7 @@ async def start_draft(ctx):
 
     draft_data.set('has-started', True)
     draft_data.set('time-began', str(datetime.now()))
+    draft_data.set('main-channel', ctx.channel.id)
 
     # get a random ordering of users
     pick_order = list(user_data.all())
@@ -275,6 +276,13 @@ async def attempt_draft():
     save_all()
 
     print(info_string)
+
+    # TODO probably shouldn't be awaiting in this loop
+    # also, do we really need fetch_user and can't use get_user?
+    usr = await bot.fetch_user(current_drafter['discord-id'])
+    await usr.send(info_string)
+
+    # await bot.get_user(current_drafter['discord-id']).send(info_string)
 
 @bot.event
 async def on_ready():
