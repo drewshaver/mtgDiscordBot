@@ -100,6 +100,12 @@ async def register(ctx, *, args=''):
         await ctx.send('ERROR: You\'re already registered!')
         return
 
+    # If the draft has been started, this command should be rejected
+    if draft_data.get('has-started') == True:
+        await ctx.send('ERROR: The draft has already been started.')
+        return
+
+    # default team_name to their discord username
     team_name = args
     if len(team_name) == 0:
         team_name = ctx.author.name
