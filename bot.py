@@ -91,10 +91,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix='', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-@bot.command()
-async def register(ctx, *, args=''):
+@bot.command(help='Register for the draft')
+async def register(ctx, *, team_name=commands.parameter(description='Optional: Defaults to discord username')):
     # check if the user is already registered
     if get_user(ctx.author.id):
         await ctx.send('ERROR: You\'re already registered!')
@@ -106,7 +106,6 @@ async def register(ctx, *, args=''):
         return
 
     # default team_name to their discord username
-    team_name = args
     if len(team_name) == 0:
         team_name = ctx.author.name
 
@@ -133,7 +132,7 @@ async def register(ctx, *, args=''):
 
     await ctx.send(f'Your team, {team_name}, has been registered. Happy dueling!')
 
-@bot.command()
+@bot.command(help='Start the draft.\n* Ensure all players are registered first')
 async def start_draft(ctx):
     # if the draft has already finished, this command should be rejected
     if get_has_finished() == True:
@@ -163,10 +162,10 @@ async def start_draft(ctx):
 
 # currently allowing duplicates into the wantlist
 # b/c would like to natively handle multiple copies of cards
-@bot.command()
-async def draft(ctx, *, args):
+@bot.command(help='Add a card to your want list.\n* A partial card name is acceptable as long as it is not ambiguous.\n* Drafting priority is given in the order the cards were added.')
+async def draft(ctx, *, card_name=commands.parameter(description='Name of card to add.')):
     user = get_user(ctx.author.id)
-    card = get_card(args)
+    card = get_card(card_name)
 
     if not user:
         await ctx.send('ERROR: Not registered. Try the !register command')
@@ -176,7 +175,7 @@ async def draft(ctx, *, args):
     #   either an exact string match (in which case card is already populated)
     #   or use the card from search if there is exactly 1 match
     if not card:
-        card_list = search_cards(args)
+        card_list = search_cards(card_name)
 
         if len(card_list) == 0:
             await ctx.send('ERROR: No matching cards found. Try !search to resolve')
@@ -211,7 +210,7 @@ async def draft(ctx, *, args):
 
     await ctx.send(f'Draftlist Updated: {wanted_cards_string}')
 
-@bot.command()
+@bot.command(help='Clear your want list')
 async def clear(ctx):
     user = get_user(ctx.author.id)
 
@@ -224,14 +223,14 @@ async def clear(ctx):
 
     await ctx.send('Draftlist Wiped')
 
-@bot.command()
-async def search(ctx, *, args):
-    card_list = search_cards(args)
+@bot.command(help=f'Search for a card by name\n* Partial matches are acceptable\n* No more than {SEARCH_MAX_LENGTH} results will be provided')
+async def search(ctx, *, card_name=commands.parameter(description='Name of card to search for.')):
+    card_list = search_cards(card_name)
 
     if len(card_list):
         await ctx.send(', '.join(map(lambda card:card['name'], card_list)))
     else:
-        await ctx.send(f'No cards found matching {args}')
+        await ctx.send(f'No cards found matching {card_name}')
 
 @tasks.loop(seconds=5)
 async def attempt_draft():

@@ -10,12 +10,14 @@ Features:
 - Can be used to manage an arbitrary number of players conducting a rotisserie draft (aka snake draft).
 - Allows for queuing of picks ahead of time.
   - Keep your draft running quickly by queuing multiple picks in a row.
-  - In the event that another player drafts one of your queued choices, you will be alerted. (TODO)
 
 --------------------------------------------------------------------------------------------------
 
 TODO:
 - Handle API failures gracefully
+- Alert players if their planned pick is taken
+- Allow customization around persistence, some users may want the list reset after 1 or 2 picks
+- Export picks to spreadsheet for easy viewing of current draft picks
 
 --------------------------------------------------------------------------------------------------
 
