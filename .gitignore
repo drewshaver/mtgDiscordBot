@@ -1,3 +1,4 @@
 .env
 *.db
 *_pycache_*
+google-cloud-credentials.json

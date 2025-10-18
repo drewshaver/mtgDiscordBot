@@ -3,6 +3,7 @@
 import discord
 import os
 import random
+import gspread # TODO: make the gspread calls in the async framework?
 
 from datetime import datetime
 from discord.ext import commands, tasks
@@ -12,7 +13,7 @@ from pickledb import PickleDB
 
 SEARCH_MAX_LENGTH = 5
 WANTLIST_MAX_LENGTH = 20
-DRAFT_ROUNDS = 42
+DRAFT_ROUNDS = 10
 
 load_dotenv()
 
@@ -87,6 +88,10 @@ def get_current_index():
     #snaking backwards
     return player_count - 1 - pick_number_in_round
 
+def get_google_sheet(sheet_name):
+    gc = gspread.service_account(filename='google-cloud-credentials.json')
+    return gc.open_by_key(draft_data.get('google-sheet-id')).worksheet(sheet_name)
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -94,7 +99,7 @@ intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 @bot.command(help='Register for the draft')
-async def register(ctx, *, team_name=commands.parameter(description='Optional: Defaults to discord username')):
+async def register(ctx, *, team_name=commands.parameter(description='Optional: Defaults to discord username', default='')):
     # check if the user is already registered
     if get_user(ctx.author.id):
         await ctx.send('ERROR: You\'re already registered!')
@@ -133,7 +138,7 @@ async def register(ctx, *, team_name=commands.parameter(description='Optional: D
     await ctx.send(f'Your team, {team_name}, has been registered. Happy dueling!')
 
 @bot.command(help='Start the draft.\n* Ensure all players are registered first')
-async def start_draft(ctx):
+async def start_draft(ctx, *, google_sheet_id=commands.parameter(description='Optional: Publish draft data to a Lucky Paper Template', default='')):
     # if the draft has already finished, this command should be rejected
     if get_has_finished() == True:
         await ctx.send('ERROR: The draft already finished. If you want to run a new draft, kill the bot and then delete db files.')
@@ -153,9 +158,20 @@ async def start_draft(ctx):
     pick_order = list(user_data.all())
     random.shuffle(pick_order)
 
-    pick_order_string = ', '.join(map(lambda user_id:get_user(user_id)['discord-name'], pick_order))
-
     draft_data.set('pick-order', pick_order)
+
+    # transform into team names for printing
+    pick_order_names = list(map(lambda user_id:get_user(user_id)['team-name'], pick_order))
+
+    pick_order_string = ', '.join(pick_order_names)
+
+    if google_sheet_id:
+        draft_data.set('google-sheet-id', google_sheet_id)
+        range_string = f'B12:B{12+get_player_count()-1}'
+        # generate list of lists because we are updating a vertical range
+        player_names = list(map(lambda name:[name], pick_order_names))
+        get_google_sheet('Overview').update(player_names, range_string)
+
     draft_data.save()
 
     await ctx.send(f'The draft has been started!\nThe draft order is: {pick_order_string}')
@@ -238,6 +254,13 @@ async def attempt_draft():
 
     if get_has_finished():
         print('Draft is over')
+
+        if not draft_data.get('current-drafter-notified'):
+            bot.loop.create_task(bot.get_channel(draft_data.get('main-channel')).send('The draft is complete!'))
+
+            draft_data.set('current-drafter-notified', True)
+            draft_data.save()
+
         return
 
     if not draft_data.get('has-started'):
@@ -253,10 +276,10 @@ async def attempt_draft():
         print('Waiting on current drafter')
 
         if not draft_data.get('current-drafter-notified'):
+            bot.loop.create_task(bot.get_user(current_drafter['discord-id']).send(f"It's your turn to draft: {pick_string}"))
+
             draft_data.set('current-drafter-notified', True)
             draft_data.save()
-
-            bot.loop.create_task(bot.get_user(current_drafter['discord-id']).send(f"It's your turn to draft: {pick_string}"))
 
         return
 
@@ -268,19 +291,21 @@ async def attempt_draft():
         user = get_user(user_id)
         user['wanted-cards'] = list(filter(lambda card_id:card_id != card_to_draft['id'], user['wanted-cards']))
 
-        # snipe notifications go here if desired
+        # TODO snipe notifications go here if desired
+
+    get_google_sheet('Draft').update_cell(4 + get_current_round(), 3 + get_current_index(), card_to_draft['name'])
 
     card_to_draft['taken'] = True
     current_drafter['drafted-cards'].append(card_to_draft['id'])
 
     info_string = f"{pick_string}\n{current_drafter['team-name']} has drafted {card_to_draft['name']}"
 
-    draft_data.set('pick-number', draft_data.get('pick-number') + 1)
-    draft_data.set('current-drafter-notified', False)
-
     print(info_string)
 
     bot.loop.create_task(bot.get_channel(draft_data.get('main-channel')).send(info_string))
+
+    draft_data.set('pick-number', draft_data.get('pick-number') + 1)
+    draft_data.set('current-drafter-notified', False)
 
     save_all()
 
