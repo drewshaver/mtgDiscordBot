@@ -25,7 +25,7 @@ Setup:
 
 To set up the bot, you need to register a new bot on the Discord app page, get a token, etc. There are plenty of guides for this available. The token will be used to connect the bot to your server. You must edit the .env file with your token
 
-If you are using the spreadsheet export, you need a JWT configured for authentication from Google Cloud API services. Store the file in `google-cloud-credentials.json`. Here is a guide for that: https://docs.gspread.org/en/latest/oauth2.html#enable-api-access
+If you are using the spreadsheet export, you need a JWT configured for authentication from Google Cloud API services. Store the key file in `google-cloud-credentials.json`. Here is a guide to set that up: https://docs.gspread.org/en/latest/oauth2.html#service-account. Remember to share edit access on the spreadsheet with your IAM user at Google Cloud.
 
 The app and supporting data file (bot.py, card-list.txt) must be placed in a directory together. The Python app needs to run indefinitely, as long as the draft is running. I would recommend using `screen` or `nohup` to accomplish this.
 
